@@ -18,7 +18,7 @@ from airflow.operators.python import (
 #from movie.api.call import gen_url, req, get_key, req2list, list2df, save2df
 
 with DAG(
-    'pyspark_movie',
+    'movies_dynamic_json',
     # These args will get passed on to each operator
     # You can override them on a per-task basis during operator initialization
     default_args={
@@ -45,21 +45,21 @@ with DAG(
 #        requirements=["git+https://github.com/minju210/spark_flow.git@0.2.0/airflowdag"],
 #        system_site_packages=False,
 #    )
-    re_task = PythonOperator(
-        task_id='re.partition',
+    get_data = PythonOperator(
+        task_id='get.data',
         python_callable=re_partition,
     )
     
 
-    join_df = BashOperator(
-        task_id='join.df',
+    parsing_parquet = BashOperator(
+        task_id='parsing.parquet',
         bash_command='''
             echo "{{ds_nodash}}"
             '''
     )
     
-    agg_df = BashOperator(
-        task_id='agg.df',
+    select_parquet = BashOperator(
+        task_id='select.parquet',
         bash_command='''
             echo "{{ds_nodash}}"
             '''
@@ -70,4 +70,4 @@ with DAG(
     
     
     # flow
-    start >> re_task >> join_df >> agg_df >> end
+    start >> get_data >> parsing_parquet >> select_parquet >> end
