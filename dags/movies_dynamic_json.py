@@ -1,3 +1,8 @@
+import json
+import requests
+import pandas as pd
+from pyspark.sql import SparkSession  # SparkSession 임포트 추가
+from pyspark.sql.functions import explode_outer, col, size
 from datetime import datetime, timedelta
 from textwrap import dedent
 from pprint import pprint
@@ -29,40 +34,82 @@ with DAG(
     max_active_runs=1,
     #max_active_tasks=3,
     description='processing pyspark for movie data',
-    #schedule_interval=timedelta(days=1),
-    schedule="10 2 * * *",
-    start_date=datetime(2015, 1, 1),
-    end_date=datetime(2015, 1, 3),
+    #shedule_interval=
+    schedule="@once",
+    #schedule="10 2 * * *",
+    start_date=datetime(2017, 1, 1),
+    end_date=datetime(2017,1, 1),
     catchup=True,
-    tags=['movie', 'api', 'amt', 'pyspark'],
+    tags=['movie', 'dynamic', 'json', 'sql'],
 ) as dag:
-    def re_partition(ds_nodash):
-        from spark_flow.re import re_part
-        re_part(ds_nodash)
-#    re_task = PythonVirtualenvOperator(
-#        task_id='re.partition',
-#        python_callable=re_partition,
-#        requirements=["git+https://github.com/minju210/spark_flow.git@0.2.0/airflowdag"],
-#        system_site_packages=False,
-#    )
+    def save_data(ds_nodash):
+        from movdata.yj import save_movies
+        year = str(ds_nodash)[:4]
+        
+        save_movies(year=year)
+    
+    #ok~~~ 코딩 갈 준비 완료~~~
+    
+    def parse_data():
+        # SparkSession 생성
+        spark = SparkSession.builder.appName("parquet processing").getOrCreate()
+        
+        # JSON 파일 읽기
+        jdf = spark.read.option("multiline","true").json('/home/minjoo/code/movdata/data/movies/year=2017/data.json')
+
+        from pyspark.sql.functions import explode_outer, col, size
+        ccdf = jdf.withColumn("company_count", size("companys")).withColumn("directors_count", size("directors"))
+        
+        edf = ccdf.withColumn("company", explode_outer("companys"))
+
+        eedf = edf.withColumn("director", explode_outer("directors"))
+        
+        eedf.select(
+            col("movieCd"),
+            col("company.companyCd").alias("companyCd"),
+            col("company.companyNm").alias("companyNm"),
+            col("director")
+        ).write.mode("overwrite").parquet("/home/minjoo/output/parsed_data.parquet")
+
+        spark.stop()
+
+    def select_data():
+        spark = SparkSession.builder.appName("select parquet").getOrCreate()
+
+        # Parquet 파일 읽기
+        eedf = spark.read.parquet("/home/minjoo/output/parsed_data.parquet")
+
+        # 감독별로 영화 집계
+        grouped_by_director = eedf.groupBy("director").count()
+
+        # 회사별로 영화 집계
+        grouped_by_company = eedf.groupBy("companyNm").count()
+
+        # 집계 결과 저장
+        grouped_by_director.write.mode("overwrite").parquet("/home/minjoo/output/director_count.parquet")
+        grouped_by_company.write.mode("overwrite").parquet("/home/minjoo/output/company_count.parquet")
+        
+        grouped_by_director.show()
+        grouped_by_company.show()
+
+        # Spark 세션 종료
+        spark.stop()
+
+    
     get_data = PythonOperator(
         task_id='get.data',
-        python_callable=re_partition,
+        python_callable=save_data,
     )
     
 
-    parsing_parquet = BashOperator(
+    parsing_parquet = PythonOperator(
         task_id='parsing.parquet',
-        bash_command='''
-            echo "{{ds_nodash}}"
-            '''
+        python_callable=parse_data,
     )
     
-    select_parquet = BashOperator(
+    select_parquet = PythonOperator(
         task_id='select.parquet',
-        bash_command='''
-            echo "{{ds_nodash}}"
-            '''
+        python_callable=select_data,
     )
 
     start = EmptyOperator(task_id='start')
