@@ -1,0 +1,76 @@
+import json
+import requests
+import pandas as pd
+
+from datetime import datetime, timedelta
+from textwrap import dedent
+from pprint import pprint
+
+# The DAG object; we'll need this to instantiate a DAG
+from airflow import DAG
+
+# Operators; we need this to operate!
+from airflow.operators.bash import BashOperator
+from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import (
+        PythonOperator,
+        PythonVirtualenvOperator,
+        BranchPythonOperator
+        )
+
+# import func
+#from movie.api.call import gen_url, req, get_key, req2list, list2df, save2df
+
+with DAG(
+    'movies_dynamic_json',
+    # These args will get passed on to each operator
+    # You can override them on a per-task basis during operator initialization
+    default_args={
+        'depends_on_past': False,
+        'retries': 1,
+        'retry_delay': timedelta(seconds=3)
+    },
+    max_active_runs=1,
+    #max_active_tasks=3,
+    description='processing pyspark for movie data',
+    #shedule_interval=
+    schedule="@once",
+    #schedule="10 2 * * *",
+    start_date=datetime(2017, 1, 1),
+    end_date=datetime(2017,1, 1),
+    catchup=True,
+    tags=['movie', 'dynamic', 'json', 'sql'],
+) as dag:
+    def get_data(ds_nodash):
+        from movdata.yj import save_movies
+        year = str(ds_nodash)[0:4]
+        
+        save_movies(year=year)
+
+    
+    get_data = PythonOperator(
+        task_id='get.data',
+        python_callable=get_data,
+    )
+    
+
+    parsing_parquet = BashOperator(
+        task_id='parsing.parquet',
+        bash_command='''
+            echo "parsing.parquet"
+            '''
+    )
+    
+    select_parquet = BashOperator(
+        task_id='select.parquet',
+        bash_command='''
+            echo "select.parquet"
+            '''
+    )
+
+    start = EmptyOperator(task_id='start')
+    end = EmptyOperator(task_id='end')
+    
+    
+    # flow
+    start >> get_data >> parsing_parquet >> select_parquet >> end
